@@ -11,7 +11,7 @@
 bl_info = {
     "name": "Shell Fur Tool",
     "author": "SolarCookies",
-    "version": (0, 1, 4),  # Updated version
+    "version": (0, 1, 6),  # Updated version
     "blender": (4, 4, 1),
     "location": "3D Viewport > Sidebar > Shell Fur Tool",
     "description": "A Tool to add Shell Fur to your model",
@@ -41,6 +41,8 @@ class VIEW3D_PT_my_custom_panel(bpy.types.Panel):
         row.prop(context.scene, "pinata_texture2", text="Mask")
         row = layout.row()
         row.prop(context.scene, "pinata_texture3", text="Fur Shape")
+        row = layout.row()
+        row.prop(context.scene, "pinata_shape_lerp", text="Shape Heightmap")
         
         # UV Map Selector
         row = layout.row()
@@ -84,7 +86,8 @@ class OPERATOR_OT_rebuild_fur(bpy.types.Operator):
         PinataName = bpy.context.scene.pinata_object.name
         ColorTexture = bpy.context.scene.pinata_texture1.name  
         FurMaskTexture = bpy.context.scene.pinata_texture2.name  
-        FurPatternTexture = bpy.context.scene.pinata_texture3.name  
+        FurPatternTexture = bpy.context.scene.pinata_texture3.name
+        ShapeLerp = bpy.context.scene.pinata_shape_lerp  
         Shade = bpy.context.scene.pinata_fur_shade
         FurSize = bpy.context.scene.pinata_fur_density
         FurLength = bpy.context.scene.pinata_fur_length
@@ -109,7 +112,7 @@ class OPERATOR_OT_rebuild_fur(bpy.types.Operator):
             assert(bsdf)
                 
             maskmat.blend_method  = 'BLEND'
-            maskmat.surface_render_method   = 'NONE'
+            maskmat.surface_render_method   = 'DITHERED'
                 
             alphavalue = nodes.new(type="ShaderNodeValue")
             alphavalue.outputs[0].default_value = 0.0
@@ -277,8 +280,12 @@ class OPERATOR_OT_rebuild_fur(bpy.types.Operator):
                     furpnode.location.x = -1000        
                     furpnode.location.y = -600 
                     
-                    
-                    
+                    # Multiply alpha by heightmap
+                    alpha_mult_node = nodes.new(type="ShaderNodeMath")
+                    alpha_mult_node.operation = 'MULTIPLY'
+                    alpha_mult_node.location.x = -300
+                    alpha_mult_node.location.y = -600
+
                     #Setup add for UV offset per layer
                     uvaddnode = nodes.new(type="ShaderNodeVectorMath")
                     uvaddnode.operation = 'ADD'
@@ -334,8 +341,51 @@ class OPERATOR_OT_rebuild_fur(bpy.types.Operator):
                     
                     node_tree.links.new(furmnode.outputs[0], mixalphanode.inputs[0])
                     node_tree.links.new(furpnode.outputs[1], mixalphanode.inputs[2])
+
+                    # If heightmap option is enabled, use step function: floorclamped(((ShapeColor*16) / Layer Number))
                     
-                    node_tree.links.new(mixalphanode.outputs["Result"], bsdf.inputs["Alpha"])
+                    # Add math nodes for the step function
+                    # 1. Multiply ShapeColor (furpnode.outputs[0]) by 16
+                    mult_node = nodes.new(type="ShaderNodeMath")
+                    mult_node.operation = 'MULTIPLY'
+                    mult_node.inputs[1].default_value = 16.0
+                    mult_node.location.x = -100
+                    mult_node.location.y = -700
+
+                    # 2. Divide by Layer Number (a)
+                    div_node = nodes.new(type="ShaderNodeMath")
+                    div_node.operation = 'DIVIDE'
+                    div_node.inputs[1].default_value = float(a)
+                    div_node.location.x = 100
+                    div_node.location.y = -700
+
+                    # 3. Floor
+                    floor_node = nodes.new(type="ShaderNodeMath")
+                    floor_node.operation = 'FLOOR'
+                    floor_node.location.x = 300
+                    floor_node.location.y = -700
+
+                    # 4. Clamp (simulate floorclamped)
+                    clamp_node = nodes.new(type="ShaderNodeClamp")
+                    clamp_node.inputs['Min'].default_value = 0.0
+                    clamp_node.inputs['Max'].default_value = 1.0
+                    clamp_node.location.x = 500
+                    clamp_node.location.y = -700
+
+
+                    if ShapeLerp:
+                        # Link the math nodes
+                        node_tree.links.new(furpnode.outputs[0], mult_node.inputs[0])
+                        node_tree.links.new(mult_node.outputs[0], div_node.inputs[0])
+                        node_tree.links.new(div_node.outputs[0], floor_node.inputs[0])
+                        node_tree.links.new(floor_node.outputs[0], clamp_node.inputs['Value'])
+
+                        # Use the result as the alpha input
+                        node_tree.links.new(mixalphanode.outputs["Result"], alpha_mult_node.inputs[0])
+                        node_tree.links.new(clamp_node.outputs['Result'], alpha_mult_node.inputs[1])
+                        node_tree.links.new(alpha_mult_node.outputs[0], bsdf.inputs["Alpha"])
+                    else:
+                        node_tree.links.new(mixalphanode.outputs["Result"], bsdf.inputs["Alpha"])
                     
                     # Set Material Blend mode to alpha clip
                     
@@ -397,6 +447,11 @@ def register():
         type=bpy.types.Image,
         name="Fur Shape Texture",
         description="A texture to define the shape of the fur",
+    )
+    bpy.types.Scene.pinata_shape_lerp = bpy.props.BoolProperty(
+        name="Use Shape Heightmap",
+        description="Allows you to shape the fur using a height map on the fur shape texture (For pointy fur)",
+        default=False,
     )
     bpy.types.Scene.pinata_uv_map = bpy.props.StringProperty(
         name="Fur UV Map",
@@ -465,6 +520,7 @@ def unregister():
     del bpy.types.Scene.pinata_texture1
     del bpy.types.Scene.pinata_texture2
     del bpy.types.Scene.pinata_texture3
+    del bpy.types.Scene.pinata_shape_lerp
     del bpy.types.Scene.pinata_uv_map
     del bpy.types.Scene.pinata_fur_density
     del bpy.types.Scene.pinata_fur_resolution
