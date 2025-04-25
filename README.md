@@ -24,6 +24,7 @@
  - **Color**: The color texture for your object
  - **Mask**: The Mask is a texture that masks out any part thats painted white so you can add eyeholes or keep the fur from being visible in the mouth
  - **Fur Shape**: This is the cutout for the shape of the fur, the ones bundled with the zip are a regular pinata "Land" and scales for sea pinata "Sea"
+ - **Shape Heightmap**: Uses the brightness of the shape to control the mask based on the layer, If the shape has the brightness of 1 that would showup on the last layer
  - **UV Map**: This allows you to set the name of the UV Map to use for the fur, This gives you more freedom to move the fur around without redrawing the color texture (UV channel needs to be created first)
 
 ---
